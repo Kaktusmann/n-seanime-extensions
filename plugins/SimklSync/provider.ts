@@ -886,7 +886,7 @@ function init() {
 							size: "sm",
 							transparent: true,
 							disabled: curIdx >= paginated.length - 1,
-							onClick: ctx.eventHandler("notify:page:right", () => step(+1)),
+							onClick: ctx.eventHandler("list:page:right", () => step(+1)),
 						}),
 					],
 					{ className: "w-fit p-2 rounded-full border" }); // prettier-ignore
