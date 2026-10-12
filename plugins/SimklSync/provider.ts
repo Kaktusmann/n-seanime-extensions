@@ -1770,11 +1770,14 @@ function init() {
 					(targets.progress?.type === "remove" ? { name: "Removed Episodes", value: `[${payload_r.episodes?.map(x => x.number)}]`} : undefined)
 				].filter(x => x !== undefined); // prettier-ignore
 
+				if (!fields.length && !targets.err.length)
+					return log.warn(`update > Skipping entry update | no changes found for id="${e.mediaId}" title="${entry.title}"`); // prettier-ignore
+
 				notifications.add({
 					title: `${targets.err.length === 3 ? "Failed to update" : "Updated"} ${utils.unwrap(entry.title)}`,
 					thumbnail: utils.unwrap(entry.coverImage),
 					...(targets.err.length && { description: `Errors found: ${targets.err.join(" | ")}`}),
-					accentColor: targets.err.length === 3 ? "#ef5350" : "#6152df",
+					accentColor: !fields.length ? "#ef5350" : "#6152df",
 					fields
 				}); // prettier-ignore
 			});
