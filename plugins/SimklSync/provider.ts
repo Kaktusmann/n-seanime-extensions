@@ -1295,6 +1295,7 @@ function init() {
 				.filter((e) => e !== undefined)
 				.map(({ media, ...rest }) => ({ ...rest,
 					title: media?.title?.userPreferred,
+					idMal: media?.idMal,
 					mediaId: media?.id,
 					format: media?.format,
 					episodes: media?.episodes,
@@ -1663,16 +1664,29 @@ function init() {
 					$store.set("PRE_UPDATE_ENTRY_DATA", null);
 				}
 
-				const entry = getAnilistEntries().find((x) => x.mediaId === e.mediaId);
+				const entry =
+					getAnilistEntries().find((x) => x.mediaId === e.mediaId) ??
+					(await ctx.anime.getAnimeEntry(e.mediaId).then((e) => ({
+						title: e.media?.title?.userPreferred,
+						mediaId: e.mediaId,
+						idMal: e.media?.idMal,
+						format: e.media?.format,
+						episodes: e.media?.episodes,
+						coverImage: e.media?.coverImage?.large,
+						isAdult: e.media?.isAdult,
+						...e.listData,
+					})));
+
 				if (!entry) return log.warn(`update > AnimeMedia not found (${e.mediaId})`);
 
-				if (utils.unwrap(entry.private) && !p) return log.warn(`update > ${entry.title ?? "anilist-id/" + data.mediaId} is private. Skipping...`);
+				if ("private" in entry && utils.unwrap(entry.private) && !p)
+					return log.warn(`update > ${entry.title ?? "anilist-id/" + data.mediaId} is private. Skipping...`);
 				if (utils.unwrap(entry.isAdult) && !a) return log.warn(`update > ${entry.title ?? "anilist-id/" + data.mediaId} is adult-only. Skipping...`);
 
 				if (Custom.match(e.mediaId) && !Custom.has(e.mediaId)) 
 					return log.warn(`update > Unable to process custom entry: No id overrides found.`); // prettier-ignore
 
-				if (data.status === "PLANNING") return application.list.addToWatchList({ anime: [{ to: "plantowatch", ids: { anilist: Custom.getAbsoluteId(e.mediaId) }}]})
+				if (data.status === "PLANNING" && Object.values(data).length <= 1) return application.list.addToWatchList({ anime: [{ to: "plantowatch", ids: { anilist: Custom.getAbsoluteId(e.mediaId) }}]})
 					.then((data) => {
 						log.success(`update > request="POST" @api/sync/add-to-list response=${JSON.stringify(data)}`);
 						if (data.added.shows.length > 0 || data.added.movies.length > 0) notifications.add({
@@ -1692,8 +1706,8 @@ function init() {
 					}); // prettier-ignore
 
 				const simklentry = await application.list.getMediaListCollection().then(c => c.anime.find(x => Number(x.show.ids.anilist) === e.mediaId)); // prettier-ignore
-				const payload: $simkl.UpdateEntryBody = { ids: { anilist: Custom.getAbsoluteId(e.mediaId) } };
-				const payload_r: $simkl.UpdateEntryBody = { ids: { anilist: Custom.getAbsoluteId(e.mediaId) } };
+				const payload: $simkl.UpdateEntryBody = { ids: { anilist: Custom.getAbsoluteId(e.mediaId), mal: entry.idMal } };
+				const payload_r: $simkl.UpdateEntryBody = { ids: { anilist: Custom.getAbsoluteId(e.mediaId), mal: entry.idMal } };
 				const payload_r_r: Partial<$simkl.UpdateEntryBody> = {};
 
 				// STATUS
@@ -1704,7 +1718,7 @@ function init() {
 				const computed = !!data.scoreRaw?.valueOf() ? Math.max(Math.round(data.scoreRaw / 10), 1) : null;
 				if (score !== computed) {
 					if (computed) payload.rating = computed;
-					else payload_r_r.ids = { anilist: Custom.getAbsoluteId(e.mediaId) };
+					else payload_r_r.ids = { anilist: Custom.getAbsoluteId(e.mediaId), mal: entry.idMal };
 				}
 
 				// PROGRESS
@@ -1774,7 +1788,7 @@ function init() {
 					return log.warn(`update > Skipping entry update | no changes found for id="${e.mediaId}" title="${entry.title}"`); // prettier-ignore
 
 				notifications.add({
-					title: `${targets.err.length === 3 ? "Failed to update" : "Updated"} ${utils.unwrap(entry.title)}`,
+					title: `${!fields.length ? "Failed to update" : "Updated"} ${utils.unwrap(entry.title)}`,
 					thumbnail: utils.unwrap(entry.coverImage),
 					...(targets.err.length && { description: `Errors found: ${targets.err.join(" | ")}`}),
 					accentColor: !fields.length ? "#ef5350" : "#6152df",

@@ -36,20 +36,20 @@ declare namespace $simkl {
 	interface WatchlistPostBody {
 		movies?: {
 			to: SimklStatus;
-			ids: { anilist: number };
+			ids: { anilist: number; mal?: number };
 		}[];
 		shows?: {
 			to: SimklStatus;
-			ids: { anilist: number };
+			ids: { anilist: number; mal?: number };
 		}[];
 		anime?: {
 			to: SimklStatus;
-			ids: { anilist: number };
+			ids: { anilist: number; mal?: number };
 		}[];
 	}
 
 	interface UpdateEntryBody {
-		ids: { anilist: number };
+		ids: { anilist: number; mal?: number };
 		to?: SimklStatus;
 		status?: SimklStatus;
 		episodes?: {
@@ -99,7 +99,7 @@ declare namespace $simkl {
 
 	interface StatusEntry {
 		request: {
-			ids: { anilist: number };
+			ids: { anilist: number; mal?: number };
 			rating?: number;
 			status: SimklStatus;
 			type: "show" | "movie";
