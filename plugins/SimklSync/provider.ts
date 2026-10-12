@@ -1700,10 +1700,11 @@ function init() {
 				if (statusToSIMKL(data.status) !== simklentry?.status) payload.status = statusToSIMKL(data.status);
 
 				// SCORE
-				const computed = Number(simklentry?.user_rating) * 10;
-				if (data.scoreRaw !== computed) {
-					if (typeof data.scoreRaw === "number" && data.scoreRaw !== computed) payload.rating = Math.max(Math.round(data.scoreRaw / 10),1); //prettier-ignore
-					if (data.scoreRaw === undefined || data.scoreRaw === null) payload_r_r.ids = { anilist: Custom.getAbsoluteId(e.mediaId) }; // prettier-ignore
+				const score = simklentry?.user_rating ?? null; // undefined | null / 1-10, scoreRaw = null / 0-100
+				const computed = !!data.scoreRaw?.valueOf() ? Math.max(Math.round(data.scoreRaw / 10), 1) : null;
+				if (score !== computed) {
+					if (computed) payload.rating = computed;
+					else payload_r_r.ids = { anilist: Custom.getAbsoluteId(e.mediaId) };
 				}
 
 				// PROGRESS
@@ -1720,7 +1721,7 @@ function init() {
 				const targets: { status?: boolean; score?: "add" | "remove"; progress?: { type?: "add" | "remove"; eps: number[] }; err: string[] } = { err: [] }; // prettier-ignore;
 				if (Object.keys(payload).length > 1) await application.list.addToHistory({ anime: [payload] })
 					.then((data) => {
-						if (data.not_found.shows.length || data.not_found.movies.length) throw new Error(`No matching simkl entry.`);
+						if (data.not_found.shows.length || data.not_found.movies.length) throw new Error(`[History] No matching simkl entry.`);
 						log.success(`update > request="POST" @api/sync/history response=${JSON.stringify(data)}`);
 						if ("status" in payload) targets.status = true;
 						if ("rating" in payload) targets.score = "add";
@@ -1737,7 +1738,7 @@ function init() {
 
 				if (Object.keys(payload_r).length > 1) await application.list.removeFromList({ shows: [payload_r] })
 					.then((data) => {
-						if (data.not_found.shows.length || data.not_found.movies.length) throw new Error(`No matching simkl entry.`);
+						if (data.not_found.shows.length || data.not_found.movies.length) throw new Error(`[List] No matching simkl entry.`);
 						log.success(`update > request="POST" @api/sync/history/remove response=${JSON.stringify(data)}`);
 						targets.progress = { type: "remove", eps: payload_r.episodes?.map(e => e.number )!};
 					})
@@ -1750,7 +1751,8 @@ function init() {
 
 				if (Object.keys(payload_r_r).length > 0) await application.list.removeRatings({ anime: [payload_r_r as $simkl.UpdateEntryBody] })
 					.then((data) => {
-						if (data.not_found?.shows?.length) throw new Error("No matching simkl entry.");log.success(`update > request="POST" @api/sync/ratings/remove response=${JSON.stringify(data)}`);
+						if (data.not_found?.shows?.length) throw new Error("[Ratings] No matching simkl entry.");
+						log.success(`update > request="POST" @api/sync/ratings/remove response=${JSON.stringify(data)}`);
 						targets.score = "remove";
 					})
 					.catch((err: Error) => {
