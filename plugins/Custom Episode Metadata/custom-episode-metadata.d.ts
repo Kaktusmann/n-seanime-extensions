@@ -251,4 +251,18 @@ declare namespace CEM {
 		overview?: string;
 		image?: string;
 	}
+
+	/** Whether Animap can serve an anime, decided by the UI context and read by the metadata hooks. */
+	interface AnimapStatus {
+		/** Animap returned an error, so the plugin supplies the episode list itself. */
+		fallback: boolean;
+		/** Number of episodes to generate when acting as the fallback. */
+		episodeCount: number;
+	}
+
+	interface AnimapStore {
+		all: () => Record<number, AnimapStatus>;
+		get: (mediaId: number) => AnimapStatus | undefined;
+		set: (mediaId: number, status: AnimapStatus | null) => void;
+	}
 }

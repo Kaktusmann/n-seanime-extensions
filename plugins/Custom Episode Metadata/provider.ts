@@ -37,6 +37,48 @@ function init(): void {
 		};
 	});
 
+	// Whether Animap can serve an anime. Kept separate from the custom metadata so it survives deleting all of it.
+	$shared.define("animap", () => {
+		const key = "ANIMAP_STATUS_V1";
+		const all = () => ($storage.get(key) ?? {}) as Record<number, CEM.AnimapStatus>;
+		return {
+			all,
+			get: (mediaId: number) => all()[mediaId] as CEM.AnimapStatus | undefined,
+			set: (mediaId: number, status: CEM.AnimapStatus | null) => {
+				const obj = all();
+				if (status) obj[mediaId] = status;
+				else delete obj[mediaId];
+				$storage.set(key, obj);
+			},
+		};
+	});
+
+	// When Animap has no entry (e.g. AniDB entries that are 18+), Seanime errors out before onAnimeMetadata fires and
+	// custom metadata is never applied. For those anime, supply the episode list here instead so Animap is never called;
+	// onAnimeMetadata still runs afterwards and merges the custom metadata. Only anime with custom metadata are taken
+	// over, so everything else keeps going to Animap and picks up its entry as soon as it exists.
+	$app.onAnimeMetadataRequested((e) => {
+		const status = $shared.use<CEM.AnimapStore>("animap").get(e.mediaId);
+		if (!status?.fallback || !e.animeMetadata) return e.next();
+
+		const custom = $shared.use<CEM.SharedDatabase>("database").get(e.mediaId).data;
+		if (!Object.keys(custom).length) return e.next();
+		const numbered = Object.keys(custom).filter((k) => /^\d+$/.test(k)).map(Number);
+		const count = Math.max(status.episodeCount, ...numbered, 0);
+		if (count < 1) return e.next();
+
+		const episodes = e.animeMetadata.episodes ?? (e.animeMetadata.episodes = {});
+		for (let n = 1; n <= count; n++) {
+			episodes[`${n}`] = {
+				anidbId: 0, tvdbId: 0, title: `Episode ${n}`, image: "", airDate: "", length: 0, summary: "", overview: "",
+				episodeNumber: n, episode: `${n}`, seasonNumber: 1, absoluteEpisodeNumber: n, anidbEid: 0, hasImage: false,
+			};
+		}
+		e.animeMetadata.episodeCount = count;
+		e.preventDefault();
+		e.next();
+	});
+
 	$ui.register((ctx) => {
 		// constants
 		const REPO_AUTHOR = "nnotwen";
@@ -48,6 +90,7 @@ function init(): void {
 		const tray = ctx.newTray({ iconUrl, withContent: true, width: "35rem" });
 
 		const database = $shared.use<CEM.SharedDatabase>("database");
+		const animap = $shared.use<CEM.AnimapStore>("animap");
 		const currentMedia = ctx.state<{ id: number; banner: string; title: string; type: "tv" | "movie" } | null>(null);
 		const currEditedEp = ctx.state<CEM.CustomEpisodeMetadata | null>(null);
 
@@ -543,7 +586,7 @@ function init(): void {
 																				database.save(currentMediaData.id, update);
 																			}
 
-																			ctx.anime.clearEpisodeMetadataCache();
+																			await checkAnimap(currentMediaData.id);
 																			ctx.setTimeout(() => {
 																				$app.invalidateClientQuery(["ANIME-ENTRIES-get-anime-entry", "ANIME-get-anime-episode-collection"]);
 																				ctx.toast.success("Successfully saved episode metadata!");
@@ -570,9 +613,9 @@ function init(): void {
 												intent: "alert",
 												size: "md",
 												disabled: !(Object.values(currentEpisodeData).length - 1),
-												onClick: ctx.eventHandler(`del-${currentMediaData.id}`, () => {
+												onClick: ctx.eventHandler(`del-${currentMediaData.id}`, async () => {
 													database.delete(currentMediaData.id, currentEpisodeData.episode);
-													ctx.anime.clearEpisodeMetadataCache();
+													await checkAnimap(currentMediaData.id);
 													ctx.setTimeout(() => {
 														$app.invalidateClientQuery(["ANIME-ENTRIES-get-anime-entry", "ANIME-get-anime-episode-collection"]);
 														ctx.toast.success("Successfully removed episode metadata!");
@@ -583,10 +626,10 @@ function init(): void {
 											tray.button("Save", {
 												intent: "primary",
 												size: "md",
-												onClick: ctx.eventHandler(`save-${currentMediaData.id}`, () => {
+												onClick: ctx.eventHandler(`save-${currentMediaData.id}`, async () => {
 													try {
 														fieldRefs.save(currentMediaData.id, currentEpisodeData.episode);
-														ctx.anime.clearEpisodeMetadataCache();
+														await checkAnimap(currentMediaData.id);
 														ctx.setTimeout(() => {
 															$app.invalidateClientQuery(["ANIME-ENTRIES-get-anime-entry", "ANIME-get-anime-episode-collection"]);
 															ctx.toast.success("Successfully saved episode metadata!");
@@ -615,9 +658,9 @@ function init(): void {
 																	className: "w-full",
 																	intent: "alert",
 																	size: "md",
-																	onClick: ctx.eventHandler(`cem-del-${currentMediaData.id}`, () => {
+																	onClick: ctx.eventHandler(`cem-del-${currentMediaData.id}`, async () => {
 																		Object.values(database.get(currentMediaData.id).data).forEach((cem) => database.delete(currentMediaData.id, cem.episode));
-																		ctx.anime.clearEpisodeMetadataCache();
+																		await checkAnimap(currentMediaData.id);
 																		ctx.setTimeout(() => {
 																			ctx.toast.success(`Removed all custom metadata for ${currentMediaData.title}!`);
 																			$app.invalidateClientQuery(["ANIME-ENTRIES-get-anime-entry", "ANIME-get-anime-episode-collection"]);
@@ -647,9 +690,9 @@ function init(): void {
 																		),
 																		tray.button("Delete", {
 																			intent: "alert",
-																			onClick: ctx.eventHandler(`cem-${currentMediaData.id}-${cem.episode}`, () => {
+																			onClick: ctx.eventHandler(`cem-${currentMediaData.id}-${cem.episode}`, async () => {
 																				database.delete(currentMediaData.id, cem.episode);
-																				ctx.anime.clearEpisodeMetadataCache();
+																				await checkAnimap(currentMediaData.id);
 																				ctx.setTimeout(() => {
 																					ctx.toast.success(`Removed custom metadata for episode "${cem.episode}"!`);
 																					$app.invalidateClientQuery(["ANIME-ENTRIES-get-anime-entry", "ANIME-get-anime-episode-collection"]);
@@ -709,15 +752,54 @@ function init(): void {
 			!currEditedEpData ? fieldRefs.reset() : fieldRefs.fill(currEditedEpData);
 		}, [currEditedEp]);
 
+		// Episodes Seanime shows: aired episodes for airing shows, the total otherwise.
+		function episodeCount(media: $app.AL_BaseAnime | undefined) {
+			if (media?.nextAiringEpisode?.episode) return Math.max(0, media.nextAiringEpisode.episode - 1);
+			return media?.episodes ?? 0;
+		}
+
+		// Runs whenever custom metadata is saved or deleted. Asks Seanime for the metadata with our fallback switched off,
+		// so any Animap remap (e.g. Custom Anime Metadata's AniDB/AniList ID) is honoured, and remembers whether the hook
+		// needs to supply the episode list.
+		async function checkAnimap(mediaId: number) {
+			animap.set(mediaId, null);
+			ctx.anime.clearEpisodeMetadataCache();
+			if (mediaId >= 0x80000000) return; // custom sources provide their own metadata
+
+			let fallback = false;
+			try {
+				fallback = !(await ctx.anime.getAnimeMetadata("anilist", mediaId));
+			} catch {
+				fallback = true;
+			}
+			if (!fallback) return animap.set(mediaId, { fallback: false, episodeCount: 0 });
+
+			let count = 0;
+			try {
+				count = episodeCount((await ctx.anime.getAnimeEntry(mediaId)).media);
+			} catch {}
+			animap.set(mediaId, { fallback: true, episodeCount: count });
+			ctx.anime.clearEpisodeMetadataCache();
+		}
+
 		ctx.screen.onNavigate(async ({ pathname, searchParams }) => {
-			if (pathname !== "/entry" && !searchParams.id) return currentMedia.set(null);
-			const entry = await ctx.anime.getAnimeEntry(Number(searchParams.id));
+			if (pathname !== "/entry" || !searchParams.id) return currentMedia.set(null);
+			const mediaId = Number(searchParams.id);
+			const entry = await ctx.anime.getAnimeEntry(mediaId);
 			currentMedia.set({
 				id: entry.mediaId,
 				banner: entry.media?.bannerImage ?? "",
 				title: entry.media?.title?.userPreferred ?? "",
 				type: entry.media?.format?.valueOf() === "MOVIE" ? "movie" : "tv",
 			});
+
+			// Keep the generated episode list in step with newly aired episodes. Animap itself is only re-checked on save.
+			const status = animap.get(mediaId);
+			const count = episodeCount(entry.media);
+			if (!status?.fallback || status.episodeCount === count) return;
+			animap.set(mediaId, { fallback: true, episodeCount: count });
+			ctx.anime.clearEpisodeMetadataCache();
+			$app.invalidateClientQuery(["ANIME-ENTRIES-get-anime-entry", "ANIME-get-anime-episode-collection"]);
 		});
 
 		ctx.screen.loadCurrent();
@@ -775,5 +857,6 @@ function init(): void {
 			if (customMetadata.overview?.length) customMetadata.summary = customMetadata.overview;
 			e.animeMetadata.episodes[key] = { ...episodeMetadata, ...customMetadata };
 		}
+		e.next();
 	});
 }
