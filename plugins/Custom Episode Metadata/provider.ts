@@ -54,13 +54,15 @@ function init(): void {
 	});
 
 	// When Animap has no entry (e.g. AniDB entries that are 18+), Seanime errors out before onAnimeMetadata fires and
-	// there are no episodes to attach custom metadata to. For those anime, supply the episode list here instead so
-	// Animap is never called; onAnimeMetadata still runs afterwards and merges the custom metadata.
+	// custom metadata is never applied. For those anime, supply the episode list here instead so Animap is never called;
+	// onAnimeMetadata still runs afterwards and merges the custom metadata. Only anime with custom metadata are taken
+	// over, so everything else keeps going to Animap and picks up its entry as soon as it exists.
 	$app.onAnimeMetadataRequested((e) => {
 		const status = $shared.use<CEM.AnimapStore>("animap").get(e.mediaId);
 		if (!status?.fallback || !e.animeMetadata) return e.next();
 
 		const custom = $shared.use<CEM.SharedDatabase>("database").get(e.mediaId).data;
+		if (!Object.keys(custom).length) return e.next();
 		const numbered = Object.keys(custom).filter((k) => /^\d+$/.test(k)).map(Number);
 		const count = Math.max(status.episodeCount, ...numbered, 0);
 		if (count < 1) return e.next();
@@ -756,13 +758,12 @@ function init(): void {
 			return media?.episodes ?? 0;
 		}
 
-		// Asks Seanime for the metadata with our fallback switched off, so any Animap remap (e.g. Custom Anime Metadata's
-		// AniDB/AniList ID) is honoured, and remembers whether the hook needs to supply the episode list.
-		async function checkAnimap(mediaId: number, reset: boolean = true) {
-			if (reset) {
-				animap.set(mediaId, null);
-				ctx.anime.clearEpisodeMetadataCache();
-			}
+		// Runs whenever custom metadata is saved or deleted. Asks Seanime for the metadata with our fallback switched off,
+		// so any Animap remap (e.g. Custom Anime Metadata's AniDB/AniList ID) is honoured, and remembers whether the hook
+		// needs to supply the episode list.
+		async function checkAnimap(mediaId: number) {
+			animap.set(mediaId, null);
+			ctx.anime.clearEpisodeMetadataCache();
 			if (mediaId >= 0x80000000) return; // custom sources provide their own metadata
 
 			let fallback = false;
@@ -792,15 +793,12 @@ function init(): void {
 				type: entry.media?.format?.valueOf() === "MOVIE" ? "movie" : "tv",
 			});
 
-			// First visit: find out whether Animap knows this anime. Later visits only follow new episodes of fallbacks.
+			// Keep the generated episode list in step with newly aired episodes. Animap itself is only re-checked on save.
 			const status = animap.get(mediaId);
-			if (!status) {
-				await checkAnimap(mediaId, false);
-				if (!animap.get(mediaId)?.fallback) return;
-			} else if (status.fallback && status.episodeCount !== episodeCount(entry.media)) {
-				animap.set(mediaId, { fallback: true, episodeCount: episodeCount(entry.media) });
-				ctx.anime.clearEpisodeMetadataCache();
-			} else return;
+			const count = episodeCount(entry.media);
+			if (!status?.fallback || status.episodeCount === count) return;
+			animap.set(mediaId, { fallback: true, episodeCount: count });
+			ctx.anime.clearEpisodeMetadataCache();
 			$app.invalidateClientQuery(["ANIME-ENTRIES-get-anime-entry", "ANIME-get-anime-episode-collection"]);
 		});
 
