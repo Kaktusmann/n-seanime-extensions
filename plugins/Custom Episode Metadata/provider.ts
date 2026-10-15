@@ -638,7 +638,10 @@ function init(): void {
 													}),
 												],
 												onOpenChange: ctx.eventHandler(`modal-open-${currentMediaData.id}-${currentEpisodeData.episode}`, ({ open }) => {
-													if (!open) tmdb.overrides.episode.resetFieldRefs();
+													if (!open) {
+														tmdb.overrides.episode.resetFieldRefs();
+														tmdb.overrides.media.fieldRefs.episodeOffset.setValue("");
+													}
 												}),
 											}),
 											tray.div([], { className: "flex-1" }),
