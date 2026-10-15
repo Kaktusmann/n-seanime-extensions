@@ -63,15 +63,29 @@ function init(): void {
 
 		const custom = $shared.use<CEM.SharedDatabase>("database").get(e.mediaId).data;
 		if (!Object.keys(custom).length) return e.next();
-		const numbered = Object.keys(custom).filter((k) => /^\d+$/.test(k)).map(Number);
+		const numbered = Object.keys(custom)
+			.filter((k) => /^\d+$/.test(k))
+			.map(Number);
 		const count = Math.max(status.episodeCount, ...numbered, 0);
 		if (count < 1) return e.next();
 
 		const episodes = e.animeMetadata.episodes ?? (e.animeMetadata.episodes = {});
 		for (let n = 1; n <= count; n++) {
 			episodes[`${n}`] = {
-				anidbId: 0, tvdbId: 0, title: `Episode ${n}`, image: "", airDate: "", length: 0, summary: "", overview: "",
-				episodeNumber: n, episode: `${n}`, seasonNumber: 1, absoluteEpisodeNumber: n, anidbEid: 0, hasImage: false,
+				anidbId: 0,
+				tvdbId: 0,
+				title: `Episode ${n}`,
+				image: "",
+				airDate: "",
+				length: 0,
+				summary: "",
+				overview: "",
+				episodeNumber: n,
+				episode: `${n}`,
+				seasonNumber: 1,
+				absoluteEpisodeNumber: n,
+				anidbEid: 0,
+				hasImage: false,
 			};
 		}
 		e.animeMetadata.episodeCount = count;
@@ -193,6 +207,7 @@ function init(): void {
 					fieldRefs: {
 						tmdbId: ctx.fieldRef<string>(""),
 						tmdbSeason: ctx.fieldRef<string>(""),
+						episodeOffset: ctx.fieldRef<string>(""),
 					},
 					fill: (data: Omit<CEM.TMDBOverrides, "mediaId" | "episodeOverrides">) => {
 						tmdb.overrides.media.fieldRefs.tmdbId.setValue(data.tmdbId?.toString() ?? "");
@@ -543,6 +558,10 @@ function init(): void {
 																	tray.text(" Note that this may override previously saved custom metadata for this media.", {
 																		className: "text-sm text-orange-400 bg-orange-800 border border-orange-500 rounded-xl p-2 bg-opacity-50",
 																	}),
+																	styledInput("Episode Offset", {
+																		fieldRef: tmdb.overrides.media.fieldRefs.episodeOffset,
+																		disabled: currentMediaData.type === "movie",
+																	}),
 																	tray.button("Bulk Update", {
 																		size: "md",
 																		intent: "success-subtle",
@@ -573,9 +592,10 @@ function init(): void {
 
 																			if (typeof override.tmdbSeason !== "number") return ctx.toast.error("Missing TMDB Season Media Override!");
 																			const seasons = await tmdb.getSeason(override.tmdbId, override.tmdbSeason);
+																			const offset = Number(tmdb.overrides.media.fieldRefs.episodeOffset.current.trim());
 
 																			for (const episode of seasons.episodes) {
-																				const update: CEM.CustomEpisodeMetadata = { episode: `${episode.episode_number}` };
+																				const update: CEM.CustomEpisodeMetadata = { episode: `${offset + episode.episode_number}` };
 
 																				if (episode.name?.length) update.title = episode.name;
 																				if (typeof episode.runtime === "number") update.length = episode.runtime;
@@ -583,7 +603,20 @@ function init(): void {
 																				if (episode.overview?.length) update.overview = episode.overview;
 																				if (episode.still_path?.length) update.image = `https://image.tmdb.org/t/p/${stillImageSize}${episode.still_path}`;
 
-																				database.save(currentMediaData.id, update);
+																				// Episode overrides
+																				const epOverride = override.episodeOverrides.find((x) => x.tmdbEpisode === episode.episode_number);
+																				if (epOverride && epOverride.aniDBEpisode) {
+																					const delta = { ...update, episode: epOverride.aniDBEpisode };
+																					database.save(currentMediaData.id, delta);
+																				}
+
+																				// Skip if has current override
+																				const currOverride = override.episodeOverrides.find((x) => x.aniDBEpisode === update.episode);
+																				if (currOverride && typeof currOverride.tmdbEpisode === "number" && currOverride.tmdbEpisode !== episode.episode_number) {
+																					continue;
+																				} else {
+																					database.save(currentMediaData.id, update);
+																				}
 																			}
 
 																			await checkAnimap(currentMediaData.id);
